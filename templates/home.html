@@ -116,8 +116,8 @@
   <body>
     <div class="wrap">
       <header class="card" role="banner" aria-label="VTU Scraper header">
-        <h1>VTUHub — VTU Scraper</h1>
-        <p class="lead">Call the two endpoints directly from this page: <code>/single-post</code> and <code>/range-post</code>. Results show a preview and can be downloaded.</p>
+        <h1>VTUHub — Result Fetcher</h1>
+        <p class="lead">Enter your USN, solve the captcha, and get your raw VTU result HTML directly.</p>
       </header>
 
       <main class="card" role="main" aria-label="Overview" style="margin-top:18px">
@@ -137,6 +137,25 @@
                   <button type="button" id="single-clear" class="secondary">Clear</button>
                 </div>
 
+                <div class="result-wrap" id="single-captcha-wrap" hidden>
+                  <div class="result-meta" id="single-captcha-meta"></div>
+                  <div style="margin:10px 0; display:flex; flex-direction:column; gap:8px">
+                    <img
+                      id="single-captcha-img"
+                      alt="Captcha"
+                      style="max-width:320px; border:1px solid #eef3ff; border-radius:8px; background:#fff;"
+                    />
+
+                    <label for="single-captcha-code">Captcha code</label>
+                    <input id="single-captcha-code" name="captcha_code" type="text" placeholder="Type the code from the image" />
+
+                    <div class="row" style="margin-top:8px">
+                      <button type="button" id="single-verify">Verify</button>
+                      <button type="button" id="single-captcha-cancel" class="secondary">Cancel</button>
+                    </div>
+                  </div>
+                </div>
+
                 <div class="result-wrap" id="single-result-wrap" hidden>
                   <div class="result-meta" id="single-meta"></div>
                   <div style="margin-bottom:8px">
@@ -150,55 +169,23 @@
 
             <div style="height:18px"></div>
 
-            <div class="box" aria-labelledby="range-title">
-              <h3 id="range-title">Range (start → end)</h3>
-              <form id="range-form">
-                <label for="range-index">Index URL</label>
-                <input id="range-index" name="index_url" type="url" placeholder="https://results.vtu.ac.in/JJEcbcs25/index.php" required />
-
-                <div class="row">
-                  <div style="flex:1">
-                    <label for="start-usn">Start USN (prefix or full)</label>
-                    <input id="start-usn" name="start_usn" type="text" placeholder="" required />
-                  </div>
-                  <div style="width:160px">
-                    <label for="end-usn">End USN</label>
-                    <input id="end-usn" name="end_usn" type="text" placeholder="" required />
-                  </div>
-                </div>
-
-                <div class="row" style="margin-top:6px">
-                  <button type="submit">Fetch Range</button>
-                  <button type="button" id="range-clear" class="secondary">Clear</button>
-                </div>
-
-                <div class="result-wrap" id="range-result-wrap" hidden>
-                  <div class="result-meta" id="range-meta"></div>
-                  <div style="margin-bottom:8px">
-                    <button type="button" id="range-download" class="secondary">Download JSON</button>
-                  </div>
-                  <pre id="range-result" style="max-height:360px"></pre>
-                </div>
-              </form>
-            </div>
+            <!-- Range UI removed: this app supports only /single-post -->
 
           </section>
 
-          <aside class="right" role="complementary" aria-label="Docs and status">
-            <div class="box" aria-labelledby="docs-title">
-              <h3 id="docs-title">Open API docs (Swagger)</h3>
-              <p class="note">View all endpoints and try them live:</p>
-              <p><a href="/docs">Swagger UI — /docs</a></p>
-              <p class="note">Redoc: <a href="/redoc">/redoc</a></p>
-            </div>
-
+          <aside class="right" role="complementary" aria-label="Instructions">
             <div class="box" aria-labelledby="status-title">
-              <h3 id="status-title">Status & troubleshooting</h3>
+              <h3 id="status-title">How it works</h3>
               <ul>
-                <li>Server: <code>http://127.0.0.1:8000</code></li>
-                <li class="important">If invalid captcha repeats, improve OCR or input captcha manually.</li>
-                <li>Ensure <code>VTUScraper</code> is imported correctly and server is run from project root.</li>
+                <li><strong>Step 1:</strong> Enter your USN and click Fetch.</li>
+                <li><strong>Step 2:</strong> View the Captcha image returned by VTU.</li>
+                <li><strong>Step 3:</strong> Type the Captcha manually and Verify.</li>
+                <li><strong>Step 4:</strong> Get the raw HTML data directly!</li>
               </ul>
+            </div>
+            <div class="box" style="margin-top: 18px;">
+              <h3>API Access</h3>
+              <p class="note"><a href="/docs">Swagger UI Interface</a></p>
             </div>
           </aside>
         </div>
@@ -239,20 +226,115 @@
       const singleMeta = document.getElementById('single-meta');
       const singleOpen = document.getElementById('single-open');
       const singleDownload = document.getElementById('single-download');
+      const singleCaptchaWrap = document.getElementById('single-captcha-wrap');
+      const singleCaptchaMeta = document.getElementById('single-captcha-meta');
+      const singleCaptchaImg = document.getElementById('single-captcha-img');
+      const singleCaptchaCode = document.getElementById('single-captcha-code');
+      const singleVerifyBtn = document.getElementById('single-verify');
+      const singleCaptchaCancel = document.getElementById('single-captcha-cancel');
+
+      let singleSession = {
+        token: null,
+        cookies: null,
+        indexUrl: null,
+        usn: null,
+      };
 
       singleForm.addEventListener('submit', async (e)=>{
         e.preventDefault();
         const index = document.getElementById('single-index').value.trim();
         const usn = document.getElementById('single-usn').value.trim();
         singleResultWrap.hidden = true;
+        singleCaptchaWrap.hidden = true;
         singleMeta.textContent = 'Fetching...';
         singleResult.textContent = '';
         try {
           const data = await postJson('/single-post', { index_url: index, usn });
-          const html = typeof data === 'string' ? data : (data.html || JSON.stringify(data, null, 2));
+
+          if (data.stage === 'captcha') {
+            singleSession.token = data.token || null;
+            singleSession.cookies = data.cookies || null;
+            singleSession.indexUrl = index;
+            singleSession.usn = usn;
+
+            singleCaptchaImg.src = data.captcha_image_data_url;
+            singleCaptchaMeta.textContent = 'Captcha received. Enter the code and press Verify.';
+            singleCaptchaCode.value = '';
+            singleCaptchaWrap.hidden = false;
+            singleMeta.textContent = '';
+            return;
+          }
+
+          if (data.stage === 'result') {
+            const html = data.html || '';
+            singleResult.textContent = html;
+            singleMeta.textContent = `Fetched ${html.length} bytes`;
+            singleResultWrap.hidden = false;
+            singleCaptchaWrap.hidden = true;
+
+            singleOpen.onclick = ()=>{
+              const blob = new Blob([html], { type: 'text/html' });
+              const url = URL.createObjectURL(blob);
+              window.open(url, '_blank');
+              setTimeout(()=>URL.revokeObjectURL(url), 60000);
+            };
+
+            singleDownload.onclick = ()=>{
+              const blob = new Blob([html], { type: 'text/html' });
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = `${usn || 'result'}.html`;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              setTimeout(()=>URL.revokeObjectURL(a.href), 60000);
+            };
+
+            return;
+          }
+
+          singleMeta.textContent = 'Unexpected server response: stage=' + data.stage;
+
+        } catch (err) {
+          singleMeta.textContent = 'Error: ' + err.message;
+          singleResult.textContent = '';
+          singleResultWrap.hidden = false;
+        }
+      });
+
+      singleVerifyBtn.addEventListener('click', async ()=>{
+        const captchaValue = (singleCaptchaCode.value || '').trim();
+        if (!captchaValue) {
+          singleCaptchaMeta.textContent = 'Please enter captcha code.';
+          return;
+        }
+
+        if (!singleSession.token || !singleSession.cookies) {
+          singleCaptchaMeta.textContent = 'Captcha session expired. Fetch captcha again.';
+          return;
+        }
+
+        singleCaptchaMeta.textContent = 'Verifying...';
+        singleResultWrap.hidden = true;
+
+        try {
+          const data = await postJson('/single-post', {
+            index_url: singleSession.indexUrl,
+            usn: singleSession.usn,
+            captcha_code: captchaValue,
+            token: singleSession.token,
+            cookies: singleSession.cookies
+          });
+
+          if (data.stage !== 'result') {
+            throw new Error('Unexpected server response stage: ' + data.stage);
+          }
+
+          const html = data.html || '';
           singleResult.textContent = html;
           singleMeta.textContent = `Fetched ${html.length} bytes`;
           singleResultWrap.hidden = false;
+          singleCaptchaWrap.hidden = true;
 
           singleOpen.onclick = ()=>{
             const blob = new Blob([html], { type: 'text/html' });
@@ -265,7 +347,7 @@
             const blob = new Blob([html], { type: 'text/html' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
-            a.download = `${usn || 'result'}.html`;
+            a.download = `${singleSession.usn || 'result'}.html`;
             document.body.appendChild(a);
             a.click();
             a.remove();
@@ -273,63 +355,31 @@
           };
 
         } catch (err) {
-          singleMeta.textContent = 'Error: ' + err.message;
-          singleResult.textContent = '';
-          singleResultWrap.hidden = false;
+          singleCaptchaMeta.textContent = 'Error: ' + err.message;
         }
+      });
+
+      singleCaptchaCancel.addEventListener('click', ()=>{
+        singleCaptchaCode.value = '';
+        singleCaptchaMeta.textContent = '';
+        singleCaptchaWrap.hidden = true;
       });
 
       document.getElementById('single-clear').addEventListener('click', ()=>{
         document.getElementById('single-index').value = '';
         document.getElementById('single-usn').value = '';
+        singleCaptchaCode.value = '';
+        singleSession.token = null;
+        singleSession.cookies = null;
+        singleSession.indexUrl = null;
+        singleSession.usn = null;
         singleResultWrap.hidden = true;
+        singleCaptchaWrap.hidden = true;
+        singleCaptchaMeta.textContent = '';
+        singleCaptchaImg.src = '';
       });
 
-      // Range form
-      const rangeForm = document.getElementById('range-form');
-      const rangeResultWrap = document.getElementById('range-result-wrap');
-      const rangeResult = document.getElementById('range-result');
-      const rangeMeta = document.getElementById('range-meta');
-      const rangeDownload = document.getElementById('range-download');
-
-      rangeForm.addEventListener('submit', async (e)=>{
-        e.preventDefault();
-        const index = document.getElementById('range-index').value.trim();
-        const start = document.getElementById('start-usn').value.trim();
-        const end = document.getElementById('end-usn').value.trim();
-        rangeResultWrap.hidden = true;
-        rangeMeta.textContent = 'Fetching...';
-        rangeResult.textContent = '';
-        try {
-          const data = await postJson('/range-post', { index_url: index, start_usn: start, end_usn: end });
-          const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-          rangeResult.textContent = text;
-          rangeMeta.textContent = `Fetched ${text.length} bytes`;
-          rangeResultWrap.hidden = false;
-
-          rangeDownload.onclick = ()=>{
-            const blob = new Blob([text], { type: 'application/json' });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = `range_${start || 'start'}_${end || 'end'}.json`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            setTimeout(()=>URL.revokeObjectURL(a.href), 60000);
-          };
-        } catch (err) {
-          rangeMeta.textContent = 'Error: ' + err.message;
-          rangeResult.textContent = '';
-          rangeResultWrap.hidden = false;
-        }
-      });
-
-      document.getElementById('range-clear').addEventListener('click', ()=>{
-        document.getElementById('range-index').value = '';
-        document.getElementById('start-usn').value = '';
-        document.getElementById('end-usn').value = '';
-        rangeResultWrap.hidden = true;
-      });
+      // Range UI removed.
     </script>
   </body>
 </html>

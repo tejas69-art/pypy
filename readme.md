@@ -20,7 +20,6 @@ It dynamically:
 This system supports:
 
 * **Single USN lookup /single-post**
-* **Range lookup /range-post** (multi-threaded recommended)
 * **Web UI** (`/` → home.html, `/about` → index.html)
 * **Swagger documentation** (`/docs`)
 * **Docker CPU & GPU builds**
@@ -31,16 +30,14 @@ This system supports:
 
 | Feature          | Description                                               |
 | ---------------- | --------------------------------------------------------- |
-| Captcha OCR      | Uses Microsoft TrOCR Base Stage-1                         |
+| Captcha OCR      | Disabled (manual captcha solving)                       |
 | Captcha Cleaning | Custom grayscale, median filter, threshold, majority mask |
-| Retries          | Up to 5 retries per USN on invalid captcha                |
 | Single Lookup    | POST /single-post                                         |
-| Range Lookup     | POST /range-post                                          |
 | HTML UI          | `/` (homepage), `/about` (documentation page)             |
 | OpenAPI Docs     | `/docs`, `/redoc`                                         |
 | Docker Ready     | Dockerfile.cpu & Dockerfile.gpu                           |
 | GPU Acceleration | Optional CUDA + PyTorch                                   |
-| Multi-threadable | Range scraping supports threading/executors               |
+| Multi-threadable | Not required (single-USN flow)                            |
 
 ---
 
@@ -163,30 +160,7 @@ HTML content of result page.
 ---
 
 ## **7.2 POST /range-post**
-
-Scrapes a range of USNs.
-
-### Request:
-
-```json
-{
-  "index_url": "https://results.vtu.ac.in/JJEcbcs25/index.php",
-  "start_usn": "",
-  "end_usn": ""
-}
-```
-
-### Response:
-
-```
-{
-  "": "<html>...</html>",
-  "": "<html>...</html>",
-  ...
-}
-```
-
-Each USN has up to **5 captcha retries**.
+Removed. Use `/single-post` and solve captcha manually.
 
 ---
 
@@ -241,15 +215,9 @@ Result: much higher OCR accuracy.
 
 ---
 
-# **10. Multithreading (Recommended for Range)**
+# **10. Multithreading**
 
-Use:
-
-```python
-ThreadPoolExecutor(max_workers=10)
-```
-
-Range scraping becomes **10× faster**.
+Not required for the current single-USN manual captcha flow.
 
 ---
 
@@ -326,7 +294,6 @@ MAX_RETRY = 10
 # **14. Performance Tips**
 
 * Use GPU (Dockerfile.gpu) for **10–20× faster OCR**
-* Use **ThreadPoolExecutor** for `/range-post`
 * Cache HF model in container:
 
 ```

@@ -109,8 +109,8 @@
               <h3 id="returns-title">What this service returns</h3>
               <ul>
                 <li><strong>Full HTML</strong> for the VTU result page.</li>
-                <li>Automatic retry on invalid captcha (up to 5 attempts).</li>
-                <li>Two main endpoints: <code>/single-post</code> and <code>/range-post</code>.</li>
+                <li><strong>Manual captcha</strong> required for <code>/single-post</code>.</li>
+                <li>Use only <code>/single-post</code> (range disabled).</li>
               </ul>
               <p class="note">If you want parsed JSON rather than raw HTML, add a post-processing step or request a parser endpoint.</p>
             </div>
@@ -129,10 +129,6 @@
   -H "Content-Type: application/json" \
   -d '{"index_url":"https://results.vtu.ac.in/JJEcbcs25/index.php","usn":"4MH"}'</code></pre>
 
-              <p class="note" style="margin-top:10px"><strong>Range</strong> — returns a map of USN → HTML for a range.</p>
-              <pre><code>curl -X POST "http://127.0.0.1:8000/range-post" \
-  -H "Content-Type: application/json" \
-  -d '{"index_url":"https://results.vtu.ac.in/JJEcbcs25/index.php","start_usn":"4MH","end_usn":"4MH"}'</code></pre>
             </div>
           </section>
 
@@ -148,7 +144,7 @@
               <h3 id="status-title">Status & troubleshooting</h3>
               <ul>
                 <li>Server: <code>http://127.0.0.1:8000</code></li>
-                <li class="important">If invalid captcha repeats, improve OCR or input captcha manually.</li>
+                <li class="important">Single-USN requires manual captcha entry (no OCR retries).</li>
                 <li>Ensure <code>VTUScraper</code> is imported correctly and server is run from project root.</li>
               </ul>
             </div>

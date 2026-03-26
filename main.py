@@ -1,16 +1,34 @@
-from fastapi import FastAPI, HTTPException
-from models.requests.models import SingleRequest, RangeRequest
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
 
 import urllib3
 import re
-import json
 
 from services.mainclass import VTUScraper
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = FastAPI(title="VTU Scraper API")
+
+templates = Jinja2Templates(directory="templates")
+
+INVALID_CAPTCHA_MARKERS = ("Invalid captcha", "Invalid captcha code !!!")
+INVALID_CAPTCHA_ERROR = "Invalid captcha"
+
+
+class SingleRequest(BaseModel):
+    index_url: str
+    usn: str
+    captcha_code: Optional[str] = None
+    token: Optional[str] = None
+    cookies: Optional[Dict[str, Any]] = None
+
+
+def is_invalid_captcha(html: str) -> bool:
+    return any(marker in html for marker in INVALID_CAPTCHA_MARKERS)
 
 
 # ----------------- HEALTH CHECK -----------------
@@ -33,122 +51,46 @@ def single_post(body: SingleRequest):
 
     scraper = VTUScraper(site_path)
 
-    MAX_RETRY = 5
-    attempt = 0
-    result = None
+    # Stage 1: return captcha to the user
+    if not body.captcha_code:
+        session_data = scraper.start(lns=body.usn)
+        mime = session_data["captcha_image"]["mime"]
+        captcha_b64 = session_data["captcha_image"]["base64"]
+        captcha_data_url = f"data:{mime};base64,{captcha_b64}"
+        return {
+            "usn": body.usn,
+            "stage": "captcha",
+            "captcha_image_data_url": captcha_data_url,
+            "token": session_data["token"],
+            "cookies": session_data["cookies"],
+        }
 
-    while attempt < MAX_RETRY:
-        attempt += 1
-        print(f"[SINGLE] Attempt {attempt}")
+    # Stage 2: verify user captcha and return result HTML
+    if not body.token or body.cookies is None:
+        raise HTTPException(400, "token and cookies are required when captcha_code is provided")
 
-        try:
-            # try all allowed signatures
-            try:
-                result = scraper.run(lns=body.usn)
-            except TypeError:
-                try:
-                    result = scraper.run(Ins=body.usn)
-                except TypeError:
-                    result = scraper.run(body.usn)
+    try:
+        html = scraper.submit(
+            lns=body.usn,
+            token=body.token,
+            captcha_code=body.captcha_code,
+            cookies=body.cookies,
+        )
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
-        except Exception as e:
-            raise HTTPException(500, str(e))
+    if is_invalid_captcha(html):
+        raise HTTPException(400, INVALID_CAPTCHA_ERROR)
 
-        # convert to HTML string
-        html = result["html"] if isinstance(result, dict) and "html" in result else str(result)
-
-        # INVALID CAPTCHA CHECK
-        if "Invalid captcha" in html or "Invalid captcha code !!!" in html:
-            print("Invalid captcha — retrying...")
-            continue
-
-        # valid result → break
-        break
-
-    return {"usn": body.usn, "html": html}
+    return {"usn": body.usn, "stage": "result", "html": html}
 
 
-# ----------------- RANGE POST API -----------------
-@app.post("/range-post")
-def range_post(body: RangeRequest):
-    url = body.index_url.strip()
+# ----------------- HTML ROUTES -----------------
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    return templates.TemplateResponse("home.html", {"request": request})
 
-    m = re.search(r"results\.vtu\.ac\.in/([^/]+)/index\.php", url)
-    if not m:
-        raise HTTPException(400, "Invalid index_url format")
-    site_path = m.group(1)
 
-    # inline USN pattern
-    m1 = re.search(r"^(.*?)(\d+)$", body.start_usn)
-    m2 = re.search(r"^(.*?)(\d+)$", body.end_usn)
-    if not m1 or not m2:
-        return {"error": "Cannot auto-increment USN format"}
-
-    prefix = m1.group(1)
-    start_num = int(m1.group(2))
-    end_num = int(m2.group(2))
-    width = len(m1.group(2))
-
-    if end_num < start_num:
-        return {"error": "End USN must be >= Start USN"}
-
-    # concurrency settings
-    MAX_WORKERS = 10
-
-    def fetch_usn(usn: str) -> (str, str):
-        """
-        Worker for a single USN.
-        Returns tuple (usn, html_or_error)
-        """
-        MAX_RETRY = 5
-        attempt = 0
-        last_err = None
-
-        # create a fresh scraper per worker for thread-safety
-        scraper = VTUScraper(site_path)
-
-        while attempt < MAX_RETRY:
-            attempt += 1
-            print(f"[RANGE][{usn}] Attempt {attempt}")
-
-            try:
-                try:
-                    res = scraper.run(lns=usn)
-                except TypeError:
-                    try:
-                        res = scraper.run(Ins=usn)
-                    except TypeError:
-                        res = scraper.run(usn)
-            except Exception as e:
-                last_err = json.dumps({"error": str(e)})
-                # fatal error for this USN: stop retrying
-                return usn, last_err
-
-            html = res["html"] if isinstance(res, dict) and "html" in res else str(res)
-
-            # check captcha fail -> retry
-            if "Invalid captcha" in html or "Invalid captcha code !!!" in html:
-                print(f"[RANGE][{usn}] Invalid captcha — retrying...")
-                continue
-
-            # success
-            return usn, html
-
-        # all retries exhausted
-        return usn, "FAILED AFTER 5 RETRIES (CAPTCHA ERROR)" if last_err is None else last_err
-
-    # prepare USN list
-    usn_list = [f"{prefix}{str(n).zfill(width)}" for n in range(start_num, end_num + 1)]
-
-    results = {}
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futures = {ex.submit(fetch_usn, usn): usn for usn in usn_list}
-        for fut in as_completed(futures):
-            usn = futures[fut]
-            try:
-                u, output = fut.result()
-                results[u] = output
-            except Exception as e:
-                results[usn] = json.dumps({"error": str(e)})
-
-    return results
+@app.get("/about", response_class=HTMLResponse)
+def about(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
