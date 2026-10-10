@@ -25,7 +25,7 @@ class VTUScraper:
             "Connection": "keep-alive",
             "Content-Type": "application/x-www-form-urlencoded",
             "Origin": "https://results.vtu.ac.in",
-            "Referer": "https://results.vtu.ac.in/JJEcbcs25/index.php",
+            "Referer": self.index_url,
             "Sec-Fetch-Dest": "document",
             "Sec-Fetch-Mode": "navigate",
             "Sec-Fetch-Site": "same-origin",
@@ -113,7 +113,7 @@ class VTUScraper:
 
         r = requests.post(
             url=self.result_url,
-            headers=self.headers,
+            headers=self.result_header,
             cookies=cookies,
             data=result_payload,
             timeout=self.timeout,
